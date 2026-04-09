@@ -54,3 +54,69 @@ The application will be available at:
 - Web Interface: `http://localhost:8000`
 - API Documentation: `http://localhost:8000/docs`
 
+## Application Structure
+
+```
+.
+├── backend/
+│   ├── app.py               # FastAPI app; serves static frontend, defines /api/query endpoint
+│   ├── rag_system.py        # RAGSystem — top-level orchestrator; loads docs, handles queries
+│   ├── ai_generator.py      # AIGenerator — calls Claude API, manages tool loop
+│   ├── search_tools.py      # Tool base class + CourseSearchTool; extensible tool registry
+│   ├── vector_store.py      # VectorStore — wraps ChromaDB; ingests and searches embeddings
+│   ├── document_processor.py# Parses .txt course docs into chunks for indexing
+│   ├── session_manager.py   # In-memory conversation history per session
+│   ├── models.py            # Pydantic request/response models
+│   ├── config.py            # App configuration (model name, DB path, etc.)
+│   └── chroma_db/           # Persisted ChromaDB vector data (auto-created)
+├── frontend/
+│   ├── index.html           # Chat UI
+│   ├── script.js            # Sends queries to /api/query, renders responses
+│   └── style.css            # Styles
+├── docs/                    # Course transcript .txt files (ingested on startup)
+├── run.sh                   # Quick-start script
+└── pyproject.toml           # uv/Python project config
+```
+
+## Request Flow
+
+```
+Browser
+  │
+  └─ POST /api/query
+        │
+        ▼
+   app.py → RAGSystem.query()
+                │
+                ▼
+         AIGenerator.generate_response()
+           │  ① First Claude API call (with search_course_content tool available)
+           │
+           ▼
+     Claude invokes tool
+           │
+           ▼
+     CourseSearchTool.execute()
+           │
+           ▼
+     VectorStore.search() → ChromaDB query
+           │
+           ▼
+     Tool result returned to Claude
+           │
+           ▼
+          ② Second Claude API call (tool result in context)
+           │
+           ▼
+     Final answer streamed back to browser
+```
+
+**Key design decisions:**
+- ChromaDB holds two collections: `course_catalog` (course-level metadata) and `course_content` (text chunks).
+- Conversation history lives in `SessionManager` (in-memory, lost on restart); it is injected as a formatted string into the system prompt.
+- The tool loop is single-depth: Claude may call `search_course_content` once per query.
+
+**Adding a new tool:**
+1. Subclass `Tool` in `search_tools.py` and implement `get_tool_definition()` and `execute()`.
+2. Register it with `tool_manager.register_tool(your_tool)` in `RAGSystem.__init__()`.
+
